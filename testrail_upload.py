@@ -2,7 +2,7 @@
 # coding: utf-8
 
 """
-Testrail upload utility
+Testrail utils
 """
 
 from argparse import ArgumentParser, ArgumentError, RawDescriptionHelpFormatter
@@ -38,13 +38,12 @@ log.addHandler(file_h)
 ARTIFACTS_CRED = ''
 URL_BASE = ''
 URL_ARTIFACTS = (
-    "https://{0}@".format(
+    "".format(
         ARTIFACTS_CRED)
 )
 HEADER = {"Content-Type": "application/json"}
 RING_ID = 1
 OS = ('Centos6', 'Centos7', 'Trusty')
-SECTIONS = []
 
 NOT_FOUND_FILE = ".tests_not_found_{0}".format(int(time.time()))
 
@@ -59,8 +58,14 @@ except KeyError:
     raise Exception('Please export TESTRAIL_KEY environment variable')
 
 RANDOM_TEST_NAMES = {
-    '':
+    'rs2':
         [
+            'test.test_simpleflow.test_simpleflow[make bucket',
+            'test.test_simpleflow.test_simpleflow[list bucket',
+            'test.test_simpleflow.test_simpleflow[put file',
+            'test.test_simpleflow.test_simpleflow[get file',
+            'test.test_simpleflow.test_simpleflow[del file',
+            'test.test_simpleflow.test_simpleflow[delete bucket',
         ]
 }
 report_obj = namedtuple('report', ['path', 'section', 'distrib'])
@@ -94,11 +99,34 @@ def testrail_get(cmd, t_id, **params):
     return ret
 
 
+def testrail_post(url, request):
+    """
+
+    :param url: tesrail URL
+    :type url: string
+    :param request: payload
+    :type: dict
+    :return:
+    """
+    ret = requests.post(url,
+                        headers=HEADER,
+                        data=json.dumps(request),
+                        auth=(LOGIN, KEY))
+
+    status_code = ret.status_code
+    log.debug('status code: %s, log: %s, reason: %s',
+              status_code, ret.text, ret.reason)
+
+    return ret
+
+
 def add_plan(name, milestone=None):
     """
 
     :param name: testrail plan name
     :type name: string
+    :param milestone (optional): testrail milestone linked to the test plan
+    :type milestone: string
     :return: None
     """
 
@@ -110,13 +138,9 @@ def add_plan(name, milestone=None):
     if milestone:
         milestone_id = get_milestone(milestone)
         request['milestone_id'] = milestone_id
-    ret = requests.post(url,
-                        headers=HEADER,
-                        data=json.dumps(request),
-                        auth=(LOGIN, KEY))
-    status_code = ret.status_code
-    log.debug('status code: %s, log: %s, reason: %s',
-              status_code, ret.text, ret.reason)
+    ret = testrail_post(url, request)
+
+    return ret
 
 
 def add_plan_entry(plan_id, suite_id, config_ids):
@@ -142,14 +166,30 @@ def add_plan_entry(plan_id, suite_id, config_ids):
             ]
     }
 
+    ret = testrail_post(url, request)
+    return ret
 
-    ret = requests.post(url,
-                        headers=HEADER,
-                        data=json.dumps(request),
-                        auth=(LOGIN, KEY))
-    status_code = ret.status_code
-    log.info('status code: %s, log: %s, reason: %s',
-             status_code, ret.text, ret.reason)
+
+def update_plan_entry(plan_id, entry_id):
+    """
+    Update test runs of a test plan to include all new added testcases
+
+    :param plan_id: testrail plan
+    :type plan_id: integer
+    :param entry_id: testrail run entry_id
+    :type entry_id: integer
+    :return: None
+    """
+    url = os.path.join(
+        URL_BASE, 'index.php?/api/v2/update_plan_entry/{0}/{1}'.format(
+            plan_id, entry_id
+        ))
+    request = {
+        "include_all": True
+    }
+
+    ret = testrail_post(url, request)
+    return ret
 
 
 def add_sections(suite, sections):
@@ -164,13 +204,8 @@ def add_sections(suite, sections):
         url = os.path.join(URL_BASE, 'index.php?/api/v2/add_section/1')
         log.info("Add %s section", section)
         request = {"name": section, "suite_id": suite_id}
-        ret = requests.post(url,
-                            headers=HEADER,
-                            data=json.dumps(request),
-                            auth=(LOGIN, KEY))
-        status_code = ret.status_code
-        log.debug('status code: %s, log: %s, reason: %s',
-                  status_code, ret.text, ret.reason)
+        ret = testrail_post(url, request)
+        assert ret.status_code != 400
 
 
 def get_suite(suite):
@@ -206,7 +241,7 @@ def get_section(suite_id, section):
 def parse_report(report_path):
     """
 
-    :param report: path to junit report
+    :param report_path: path to junit report
     :return: list of test cases name (string)
     """
     report = parse(report_path)
@@ -230,8 +265,24 @@ def modify_testname(test_name, section):
     :return: string
     """
 
-    test_name = re.sub(r'\(172.*\)', '', test_name)  # bizstorenode hack #FIXME
-    test_name = re.sub(r'201*.*.*', '', test_name)  # remove date (supervisor)
+    # remove random RING key
+    test_name = re.sub('[0-F]{40}', 'KEY', test_name)
+
+    # remove too long ring name (sprov)
+    test_name = re.sub('[A]{32}', 'A*32', test_name)
+
+    # remove IP address (bizstorenode
+    test_name = re.sub(
+        r'\(172.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.*\)', '', test_name
+    )
+
+    # remove IP address (geos)
+    test_name = re.sub(
+        r'172.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.*\]', '', test_name
+    )
+
+    # remove date (supervisor)
+    test_name = re.sub('20[0-9]{2}.[0-9]{1,2}.[0-9]{1,2}', '', test_name)
 
     # Remove distrib in test name (supervisor hack)
     for distrib in OS:
@@ -257,8 +308,12 @@ def add_testcases(suite, tests, testrail_cases_name):
     :type tests: dictionary, each key is a section and contains a list of tests
     :param testrail_cases_name: test cases already in testrail test suite
     :type testrail_cases_name: list of string
-    :return:
+    :return: nb_new_tests
+    :rtype: integer
     """
+    start = time.time()
+    nb_new_tests = 0
+
     for section in tests:
         log.info('Section: %s', section)
         log.info('Suite: %s', suite)
@@ -272,7 +327,12 @@ def add_testcases(suite, tests, testrail_cases_name):
             log.info('Adding %s in section %s', test, section)
             ret = add_testcase(test, section_id, testrail_cases_name)
             if ret:
+                nb_new_tests += 1
                 testrail_cases_name.append(test)
+
+    duration = time.time() - start
+
+    return nb_new_tests, duration
 
 
 def add_testcase(test_case, section_id, testrail_cases_name):
@@ -304,13 +364,8 @@ def add_testcase(test_case, section_id, testrail_cases_name):
     # Handle `Too many requests error`
     status_code = 429
     while status_code == 429:
-        ret = requests.post(url,
-                            headers=HEADER,
-                            data=json.dumps(request),
-                            auth=(LOGIN, KEY))
+        ret = testrail_post(url, request)
         status_code = ret.status_code
-        log.info('status code: %s, log: %s, reason: %s',
-                 status_code, ret.text, ret.reason)
 
     ret = json.loads(ret.text)
     log.info(ret)
@@ -341,6 +396,17 @@ def get_runs(plan_id):
 
     runs = testrail_get("get_plan", plan_id)
     return runs['entries'][0]['runs']
+
+
+def get_entries_id(plan_id):
+    """
+
+    :param plan_id:
+    :return:
+    """
+
+    runs = get_runs(plan_id)
+    return [(run['entry_id'], run['config']) for run in runs]
 
 
 def get_run(plan_id, distrib):
@@ -477,7 +543,6 @@ def add_result(test_case, tests_db, run, section, version):
             ))
         return
 
-
     child = test_case.getchildren()
 
     # Set test status
@@ -535,6 +600,7 @@ def build_results(report, version, run, section, tests_db):
     :param section: testrail section
     :param tests_db: all test cases related to the test run
     :return results:
+    :rtype: list of results
     :rtype: dict with one entry 'results', which value is a list of dict
     """
     report = parse(report.path)
@@ -548,48 +614,33 @@ def build_results(report, version, run, section, tests_db):
     # Remove empty result
     results_l = [r for r in results_l if r]
 
-    results = {"results": results_l}
-
-    return results
+    return results_l
 
 
-def put_results(version, run, report, distrib, tests_db):
+def put_results(run, results, tests_db):
     """
 
-    :param version:
     :param run:
-    :param reports: list of report objects
-    :type reports: list of `report_obj` tuples
+    :param: results
     :param tests_db:
     :return:
     """
 
     log.debug(tests_db)
 
-    log.info('report: %s', report)
+    results_d = {'results': results}
 
-    number_of_res = 0
+    number_of_res = len(results)
 
-    if report.section and report.distrib == distrib:
-        results = build_results(report, version, run, report.section, tests_db)
-        nb_res = len(results['results'])
-        number_of_res += nb_res
+    # POST results dictionary
+    url = URL_BASE + "index.php?/api/v2/add_results/{0}".format(run)
+    status_code = 429
+    while status_code == 429:
+        log.info('Posting results...')
+        ret = testrail_post(url, results_d)
+        status_code = ret.status_code
 
-        # POST results dictionary
-        url = URL_BASE + "index.php?/api/v2/add_results/{0}".format(run)
-        status_code = 429
-        while status_code == 429:
-            log.info('POST results:\nReport:%s\nNb results: %s',
-                     report, nb_res)
-            ret = requests.post(url,
-                                headers=HEADER,
-                                data=json.dumps(results),
-                                auth=(LOGIN, KEY))
-            status_code = ret.status_code
-
-            log.debug('status_code:%s text: %s reason: %s',
-                      ret.status_code, ret.text, ret.reason)
-
+    log.info('Nb results: %s', number_of_res)
     return number_of_res
 
 
@@ -599,6 +650,7 @@ def get_reports(version):
     :param version: example: staging-7.1.0.r17062621.69c5697.post-merge.00034526
     :return:
     """
+    start = time.time()
 
     version = ''.join([URL_ARTIFACTS, version])
 
@@ -608,7 +660,7 @@ def get_reports(version):
 
     # Download all junit/report.xml in odr artifacts repo
     cmd = ('wget -l 10 -q -r -P {0} '
-           '--progress=dot:style:mega --show-progress '
+           '--progress=dot:mega --show-progress '
            '--accept=*.xml {1}').format(tmp_dir, url)
 
     log.info(cmd)
@@ -619,7 +671,9 @@ def get_reports(version):
     log.info("Reports downloaded from %s:\n%s",
              url, '\n'.join(paths))
 
-    return out, paths
+    duration = time.time() - start
+
+    return out, paths, duration
 
 
 def find(pattern, path):
@@ -638,11 +692,11 @@ def find(pattern, path):
     return result
 
 
-def put_results_from_artifacts(version, suite, reports):
+def put_results_from_reports(version, suite, reports):
     """
     :param version:
-    :param artifacts:
     :param suite:
+    :param reports:
     :return:
     """
     nb_res = 0
@@ -661,6 +715,11 @@ def put_results_from_artifacts(version, suite, reports):
     assert plan, "No plan found linked to test suite {0}".format(
         version)
 
+    entries_id = get_entries_id(plan)
+    for entry_id, config in entries_id:
+        log.info('Update config: %s run (entry_id): %s', config, entry_id)
+        update_plan_entry(plan, entry_id)
+
     # Loop on distribution (one distrib per run)
     for distrib in OS:
         log.info(distrib)
@@ -669,16 +728,22 @@ def put_results_from_artifacts(version, suite, reports):
         assert run, "No run found linked to plan {0}".format(plan)
 
         tests_db = get_tests(run)
+        results = []
 
+        # Loop on report related to distrib
         for report in reports:
-            if report.distrib == distrib.lower():
-                nb_part = put_results(
-                    version, run, report, distrib.lower(), tests_db
-                )
-                nb_res += nb_part
+            if report.distrib == distrib.lower() and report.section:
 
+                results_c = build_results(
+                    report, version, run, report.section, tests_db
+                )
+                results.extend(results_c)
+                log.info('%s: %s results', report, len(results_c))
+        nb_res_distrib = put_results(run, results, tests_db)
+        nb_res += nb_res_distrib
     duration = time.time() - start
-    log.info("%s Results uploaded in %s seconds", nb_res, duration)
+
+    return nb_res, duration
 
 
 def check_test_case(report, testrail_names):
@@ -696,7 +761,9 @@ def check_test_case(report, testrail_names):
     log.info('check test cases in %s', report.path)
     test_cases = parse_report(report.path)
 
-    missing_tests = [test for test in test_cases if test not in testrail_names]
+    missing_tests = [modify_testname(test, None)
+                     for test in test_cases
+                     if modify_testname(test, None) not in testrail_names]
 
     return missing_tests
 
@@ -706,15 +773,21 @@ def check_test_cases(reports, suite):
     Check tests in report are present in testrail
 
     :param reports: list of reports
-    :param report_path_list: list of `report_obj` tuples
-    :return missing_tests: tests that are missing
-    :rtype: dictionary
+    :param suite: testrail suite
+    :return
+        missing_tests: tests that are missing,
+        testrail_name: existing tests
+        duration
+    :rtype: tuple (dict, list, integer)
     """
+    start = time.time()
+
     missing_tests = defaultdict(list)
 
     log.info('Get cases from suite: %s', suite)
     testrail_cases = get_cases(suite)
-    testrail_names = [test['title'] for test in testrail_cases]
+    testrail_names = [modify_testname(test['title'], None)
+                      for test in testrail_cases]
 
     for report in reports:
         section = report.section
@@ -730,7 +803,9 @@ def check_test_cases(reports, suite):
                 # Avoid doublon
                 missing_tests[section] = list(set(missing_tests[section]))
 
-    return missing_tests, testrail_names
+    duration = time.time() - start
+
+    return missing_tests, testrail_names, duration
 
 
 def arg_parse():
@@ -743,19 +818,21 @@ def arg_parse():
     1. Add test cases to a test suite:
 
        /!\ section and distribution MUST be in the report path
-       [mvelay@8b31e ~]$ python {0} -t -c 7.1 -r {1}
+       [massiou8b31e ~]$ python {0} -t -c 7.1 -r {1}
 
     2. Add results
        a. directly from an artifact url
-       [mvelay@8b31e ~]$ python {0} -u  -c 7.2 -v {2} -a {2}
+       [massiou@8b31e ~]$ python {0} -u  -c 7.2 -v {3} -a {2}
 
-    b. from local junit report(s)
+       b. from local junit report(s)
        /!\ section and distribution MUST be in the report path
-       [mvelay@8b31e ~]$ python {0} -u -c 7.1 -v 7.1.0_rc5 -r {1}
+       [massiou@8b31e ~]$ python {0} -u -c 7.1 -v {4} -r {1}
 
     """.format(sys.argv[0],
-               'reports/report_$section_centos7_710_rc5.xml',
-               'bitbucket:7.2.0.0_rc2')
+               'reports/report_zimbra_centos7_710_rc5.xml',
+               'bitbucket:massiou:ring:promoted-7.2.0.0_rc2',
+               'promoted-7.2.0.0_rc2',
+               '7.1.0_rc5')
 
     parser = ArgumentParser(epilog=epilog,
                             formatter_class=RawDescriptionHelpFormatter)
@@ -800,7 +877,7 @@ def arg_parse():
     return parser, args
 
 
-def struc_reports(reports):
+def struc_reports(reports, suite):
     """
     Build report objects
 
@@ -811,6 +888,8 @@ def struc_reports(reports):
 
     :param reports: report paths list
     :type reports: list
+    :param suite: test suite name in testrail, e.g. '7.2'
+    :type suite: string
     :return: list of report object
     :rtype: list of `report_obj`
     """
@@ -831,10 +910,16 @@ def struc_reports(reports):
 
     reports_l = []
 
+    # Retrieve section names from testrail test suite
+    suite_id = get_suite(suite)
+    sections = testrail_get("get_sections", RING_ID, suite_id=suite_id)
+    sections_name = [s.get('name') for s in sections]
+    log.info('Sections: %s', sections_name)
+
     for report in reports:
         c_section = None
         c_distrib = None
-        for section in SECTIONS:
+        for section in sections_name:
             if 'undelete' in report:
                 # fuse or cifs could be in the path
                 c_section = 'undelete'
@@ -911,12 +996,19 @@ def main():
     elif add_tests:
         if cases and reports:
             # Build reports as object
-            reports = struc_reports(reports)
+            reports = struc_reports(reports, cases)
 
-            missing, present = check_test_cases(reports, cases)
+            missing, present, dur_c = check_test_cases(reports, cases)
 
             # Add missing tests cases in test suite if need be
-            add_testcases(cases, missing, present)
+            nb_new_tests, dur_a = add_testcases(cases, missing, present)
+
+            log.info("* Check existing test cases in %s seconds", dur_c)
+
+            if nb_new_tests:
+                log.info(
+                    "* Add %s new tests in %s seconds", nb_new_tests, dur_a
+                )
 
         else:
             raise ArgumentError(
@@ -925,50 +1017,46 @@ def main():
             )
 
     elif add_results and version and cases:
+        log.info("Version: %s", version)
+        log.info("Suite: %s", cases)
         if artifacts:
-
-            log.info("Version: %s", version)
             log.info("Artifacts: %s", artifacts)
-            log.info("Suite: %s", cases)
 
             # Get all reports from artifacts
-            out, reports = get_reports(artifacts)
+            out, reports, dur_g = get_reports(artifacts)
             log.debug("Get reports output: %s", out)
 
+        if reports:
             # Build reports as object
-            reports = struc_reports(reports)
-
-            # Get missing tests
-            missing, present = check_test_cases(reports, cases)
-            log.info('Missing tests: %s', missing)
-
-            # Add missing tests cases in test suite if need be
-            add_testcases(cases, missing, present)
-
-            # Push result on testrail
-            put_results_from_artifacts(version, cases, reports)
-
-        elif reports:
-            # Build reports as object
-            reports = struc_reports(reports)
+            reports = struc_reports(reports, cases)
 
             log.info(version)
             log.debug(reports)
-            plan = get_plan(version)
-            assert plan, "No plan found linked to test suite {0}".format(
-                version)
 
-            for report in reports:
-                log.info(report)
-                log.info(report.distrib)
-                run = get_run(plan, report.distrib)
-                assert run, "No run found linked to plan {0}".format(plan)
+            # Get missing tests
+            missing, present, dur_c = check_test_cases(reports, cases)
+            nb_missing = sum(
+                [len(tests) for _, tests in missing.iteritems()]
+            )
+            log.info('%s Missing tests: %s', nb_missing, missing)
 
-                tests_db = get_tests(run)
-                nb_tests = put_results(
-                    version, run, report, report.distrib, tests_db
+            # Add missing tests cases in test suite if need be
+            nb_new_tests, dur_a = add_testcases(cases, missing, present)
+
+            nb_res, dur_p = put_results_from_reports(version, cases, reports)
+
+            if artifacts:
+                log.info("* Download reports in %s seconds", dur_g)
+
+            log.info("* Check existing test cases in %s seconds", dur_c)
+
+            if nb_new_tests:
+                log.info(
+                    "* Add %s new tests in %s seconds", nb_new_tests, dur_a
                 )
-                log.info("%s Results uploaded", nb_tests)
+
+            log.info("* Put %s results in %s seconds", nb_res, dur_p)
+
         else:
             raise ArgumentError(
                 None,
