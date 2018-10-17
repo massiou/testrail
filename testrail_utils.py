@@ -16,6 +16,8 @@ import requests
 LOG_FILE = '{0}.log'.format(tempfile.NamedTemporaryFile().name)
 FORMAT = '[%(asctime)s] %(message)s'
 
+MAX_RETRY = 5
+
 # Create logger
 logging.basicConfig(level=logging.INFO, format=FORMAT)
 
@@ -104,7 +106,24 @@ def testrail_get(cmd, t_id, **params):
         cmd, url_params))
 
     log.info(url)
-    req = requests.get(url, headers=HEADER, auth=(LOGIN, KEY))
+
+    attempts = 0
+    status_code = 429
+
+    while status_code == 429 and attempts < MAX_RETRY:
+        req = requests.get(url, headers=HEADER, auth=(LOGIN, KEY))
+
+        retry_after = req.headers.get('Retry-After')
+        status_code = req.status_code
+        attempts += 1
+
+        if retry_after:
+            time.sleep(int(retry_after) + 1)
+            log.info("Retry after: %s sec...", retry_after)
+        elif status_code == 429:
+            time.sleep(attempts)
+            log.info("Waiting %s sec...", attempts)
+
     ret = req.json()
 
     return ret
@@ -121,23 +140,34 @@ def testrail_post(url, request, session=None):
     :type session: `requests.Session`
     :return:
     """
-    if session:
-        ret = session.post(url,
-                        headers=HEADER,
-                        data=json.dumps(request),
-                        auth=(LOGIN, KEY))
-    else:
-        ret = requests.post(url,
-                        headers=HEADER,
-                        data=json.dumps(request),
-                        auth=(LOGIN, KEY))
+    attempts = 0
+    status_code = 429
 
-    status_code = ret.status_code
-    if status_code != 200:
-        log.info('status code: %s, log: %s, reason: %s',
-                 status_code, ret.text, ret.reason)
+    while status_code == 429 and attempts < MAX_RETRY:
+        if session:
+            req = session.post(url,
+                               headers=HEADER,
+                               data=json.dumps(request),
+                               auth=(LOGIN, KEY))
+        else:
+            req = requests.post(url,
+                                headers=HEADER,
+                                data=json.dumps(request),
+                                auth=(LOGIN, KEY))
 
-    return ret
+        retry_after = req.headers.get('Retry-After')
+        status_code = req.status_code
+        attempts += 1
+
+        if retry_after:
+            time.sleep(int(retry_after) + 1)
+            log.info("Retry after: %s sec...", retry_after)
+        elif status_code == 429:
+            time.sleep(attempts)
+            log.info("Waiting %s sec...", attempts)
+
+
+    return req
 
 
 def add_plan(name, milestone, description):
@@ -238,12 +268,9 @@ def add_testcase(test_case, section_id, testrail_cases_name):
     log.info(url)
 
     # Handle `Too many requests error`
-    status_code = 429
-    while status_code == 429:
-        ret = testrail_post(url, request)
-        status_code = ret.status_code
+    ret = testrail_post(url, request)
 
-    return status_code
+    return ret.status_code
 
 
 def update_plan_entry(plan_id, entry_id, description):
@@ -316,14 +343,14 @@ def get_open_plan(version):
 
 def get_plans_created_before(timestamp, offset=0):
     """
+    Get the plans created after a given timestamp
 
-    :return: list of tuples (plan_id, created_on)
+    :return: list of plans
+    :rtype: list
     """
     plans = testrail_get(
         "get_plans", RING_ID, created_before=int(timestamp), offset=offset)
-    print plans
-    return [(plan.get('name'), plan.get('id'), plan.get('created_on'))
-            for plan in plans]
+    return [plan for plan in plans]
 
 
 def close_plan(plan_id):
@@ -368,6 +395,13 @@ def close_plans(pattern):
 
 
 def delete_plan(plan_id, session=None):
+    """
+    Delete test plan
+
+    :param plan_id: plan id
+    :param session: requests Session
+    :return:
+    """
     url = os.path.join(
         URL_BASE, "index.php?/api/v2/delete_plan/{0}".format(plan_id)
     )
@@ -512,17 +546,38 @@ def get_milestones(project_id=RING_ID):
     return testrail_get("get_milestones", project_id)
 
 
+def get_submilestones(id):
+    """
+    Get child milestones
+
+    :param id: milestone id
+    :type id: integer
+    :return: list of sub-milestones
+    """
+    return testrail_get("get_milestone", id)['milestones']
+
+
 def get_milestone(name):
     """
+    Given a milestone name returns its id
 
-    :param name:
-    :return:
+    :param name: milestone name
+    :type name: string
+    :return: id
+    :rtype: integer
     """
-    milestones = get_milestones()
+    parent_milestones = [
+        (mil.get('name'), mil.get('id')) for mil in get_milestones()
+    ]
 
-    for milestone in milestones:
-        if milestone.get('name') == name:
-            return milestone.get('id')
+    # Loop on milestones then sub-milestones if need be
+    for pname, pid in parent_milestones:
+        if name == pname:
+            return pid  # parent milestone found
+        sub_mil = get_submilestones(pid)
+        for sub in sub_mil:
+            if sub.get('name') == name:
+                return sub.get('id')  # sub-milestone found
 
 
 def get_tests(run_id):
@@ -566,20 +621,13 @@ def put_results(run, results, tests_db):
 
     # POST results dictionary
     url = URL_BASE + "index.php?/api/v2/add_results/{0}".format(run)
-    status_code = 429
-    attempts = 0
-    while status_code == 429:
-        log.info('Posting results...')
-        while attempts < 5:
-            try:
-                ret = testrail_post(url, results_d)
-                status_code = ret.status_code
-                break
-            except Exception as exc:
-                log.info(exc)
-                attempts += 1
-                if attempts >= 5:
-                    return 0
+    log.info('Posting results...')
+
+    ret = testrail_post(url, results_d)
 
     log.info('Nb results: %s', number_of_res)
+
+    if ret.status_code != 200:
+        log.info("Put failed: %s", ret)
+
     return number_of_res

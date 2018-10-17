@@ -25,8 +25,6 @@ from testrail_utils import (
     URL_ARTIFACTS,
     URL_ARTIFACTS_PUBLIC,
     URL_ARTIFACTS_OLD,
-    URL_ARTIFACTS_WO_CREDS,
-    URL_ARTIFACTS_OLD_WO_CREDS,
     add_plan,
     add_plan_entry,
     add_testcase,
@@ -91,6 +89,16 @@ RANDOM_TEST_NAMES = {
             'test.test_bizstorenode.Test_NODE.test_NODE_FUZZ[nodes-n3(',
             'test.test_bizstorenode.Test_NODE.test_NODE_RESYNC[nodes-n3(',
         ],
+}
+
+STATUS_ID = {
+    "passed": 1,
+    "failed": 5,
+    "skipped": 6,
+    "known_failed_ok": 7,
+    "known_failed": 10,
+    "flaky_passed": 11,
+    "flaky_failed": 12
 }
 
 report_obj = namedtuple('report', ['path', 'section', 'distrib'])
@@ -195,7 +203,9 @@ def add_testcases(suite, tests, testrail_cases_name):
     return nb_new_tests, duration
 
 
-def add_result(test_case, tests_db, run, section, version, description):
+def add_result(
+        test_case, tests_db, run, section, version, description, flaky, known_failed
+):
     """
 
     :param test_case: test case name found in report
@@ -241,11 +251,11 @@ def add_result(test_case, tests_db, run, section, version, description):
         child = child[0]
         status = child.tag
         if status == 'failure' or status == 'error':
-            status_id = 5
+            status_id = STATUS_ID["failed"]
         elif status == 'skipped':
-            status_id = 6
+            status_id = STATUS_ID["skipped"]
         else:
-            status_id = 1
+            status_id = STATUS_ID["passed"]
 
         # Get message if exists
         attrib = child.attrib.get('message', '').encode('utf-8')
@@ -263,8 +273,26 @@ def add_result(test_case, tests_db, run, section, version, description):
         message = textwrap.dedent(message)
 
     else:
-        status_id = 1
+        status_id = STATUS_ID["passed"]
         message += 'OK'
+
+    # Handle known failed tests
+    if name in known_failed:
+        if status_id == STATUS_ID["failed"]:
+            status_id = STATUS_ID["known_failed"]
+            message = "*** Known failed test ***\n%s" % message
+        elif status_id == STATUS_ID["passed"]:
+            status_id = STATUS_ID["known_failed_ok"]
+            message = "*** Known failed test PASSED (!)***\n%s" % message
+
+    # Handle flaky tests
+    elif name in flaky:
+        if status_id == STATUS_ID["passed"]:
+            status_id = STATUS_ID["flaky_passed"]
+            message = "*** flaky test OK ***\n%s" % message
+        elif status_id == STATUS_ID["failed"]:
+            status_id = STATUS_ID["flaky_failed"]
+            message = "*** flaky test FAILED ***\n%s" % message
 
     elapsed = int(float(elapsed))
 
@@ -276,7 +304,7 @@ def add_result(test_case, tests_db, run, section, version, description):
               'status_id': status_id,
               'comment': message,
               'version': version
-             }
+              }
 
     if elapsed:
         result['elapsed'] = str(elapsed) + 's'
@@ -285,27 +313,33 @@ def add_result(test_case, tests_db, run, section, version, description):
     return result
 
 
-def build_results(report, version, run, section, tests_db, description):
+def build_results(
+        report, version, run, section, tests_db, description, flaky, known_failed
+):
     """
     Given a report get a results dict
 
-    :param report_path: path to the report
-    :type report_path: string
+    :param report: path to the report
+    :type report: string
     :param version: testrail test plan
     :type version: string
     :param run: corresponding test run
     :param section: testrail section
     :param tests_db: all test cases related to the test run
+    :param description: tests description
+    :param flaky: list of case id referenced as "flaky"
+    :param known_failed: list of case id referenced as "known_failed"
     :return results:
     :rtype: list of results
-    :rtype: dict with one entry 'results', which value is a list of dict
     """
     report = parse(report.path)
 
     results_l = []
 
     for tcase in report.findall('.//testcase'):
-        result = add_result(tcase, tests_db, run, section, version, description)
+        result = add_result(
+            tcase, tests_db, run, section, version, description, flaky, known_failed
+        )
         results_l.append(result)
 
     # Remove empty result
@@ -340,14 +374,7 @@ def get_reports(version, distribs, url_artifacts=URL_ARTIFACTS):
     log.info(cmd)
 
     out = subprocess.call(cmd.split())
-
-    # Check error on wget
-    if out and out != 8:  #TODO ugly, understand why wget ends with error 8
-        if out == 6:
-            out = str(out)
-            out += '\nUsername/password authentication failure.\n'
-            out += 'ARTIFACTS_LOGIN and ARTIFACTS_PWD needs to be set\n'
-        raise Exception("wget error: {0}".format(out))
+    log.info("wget output: %s", str(out))
 
     paths = find("*.xml", tmp_dir)
 
@@ -390,26 +417,38 @@ def get_related_artifacts(version, url_artifacts=URL_ARTIFACTS):
     log.info(cmd)
 
     out = subprocess.call(cmd.split())
+    log.info("wget output: %s", out)
 
-    # Check error on wget
-    if out and out != 8:  #TODO ugly, understand why wget ends with error 8
-        if out == 6:
-            out = str(out)
-            out += '\nUsername/password authentication failure.\n'
-            out += 'ARTIFACTS_LOGIN and ARTIFACTS_PWD needs to be set\n'
-        raise Exception("wget error: {0}".format(out))
+    # Retrieve related artifacts in index.html directly
+    related_artifacts_index = find("index.html", tmp_dir)
 
-    related_artifacts = find("*", tmp_dir)
+    if related_artifacts_index:
+        index_file = related_artifacts_index[0]
+    else:
+        return
 
-    related_artifacts = [
-        r for r in related_artifacts if not r.endswith('index.html')
-        ]
-
-    if related_artifacts:
-        related_artifacts = related_artifacts[0]
-        related_artifacts = related_artifacts.split('/')[-1]
+    related_artifacts = parse_index_file(index_file)
 
     return related_artifacts
+
+
+def parse_index_file(path):
+    """
+    Parse index.html to retrieve premerge artifacts
+
+    :param path: index.html path
+    :type path: string
+    :return premerge_name: premerge artifacts name
+    :rtype: string
+    """
+    with open(path, 'r') as content:
+        try:
+            premerge_name = re.search('href="./(.*)">', content.read()).group(1)
+        except Exception as exc:
+            log.info(exc)
+            return
+
+    return premerge_name
 
 
 def find(pattern, path):
@@ -452,12 +491,30 @@ def put_results_from_reports(
     log.info(sections)
 
     centos_tests = []
+    flaky = []
+    known_failed = []
     for section in get_sections(suite_id):
         if section.get('name') not in exclude_section:
-            cases = [
-                case.get('id') for case in get_cases(suite, section.get('name'))
-                ]
+            cases_suite = get_cases(suite, section.get('name'))
+
+            cases = [case.get('id') for case in cases_suite]
             centos_tests.extend(cases)
+
+            # Retrieve flaky tests from DB
+            flaky_cases = [
+                case.get('title') for case in cases_suite
+                if case.get('refs', '') is not None
+                and "flaky" in case.get('refs')
+                ]
+            flaky.extend(flaky_cases)
+
+            # Retrieve known failed tests from DB
+            failed_cases = [
+                case.get('title') for case in cases_suite
+                if case.get('refs', '') is not None
+                and "known_failed" in case.get('refs')
+                ]
+            known_failed.extend(failed_cases)
 
     if not plan:
         add_plan(version, milestone, description)
@@ -487,7 +544,7 @@ def put_results_from_reports(
             if report.distrib == distrib.lower() and report.section:
 
                 results_c = build_results(
-                    report, version, run, report.section, tests_db, description
+                    report, version, run, report.section, tests_db, description, flaky, known_failed
                 )
                 #results.extend(results_c)
 
@@ -1007,14 +1064,11 @@ def main():
 
         if artifacts:
             if base_url:
-                # TODO quick and dirty, to be removed
-                url_artifacts = url_artifacts_wo_creds = os.path.dirname(base_url) + '/'
+                url_artifacts = os.path.dirname(base_url) + '/'
             elif old_artifacts:
                 url_artifacts = URL_ARTIFACTS_OLD
-                url_artifacts_wo_creds = URL_ARTIFACTS_OLD_WO_CREDS
             else:
                 url_artifacts = URL_ARTIFACTS
-                url_artifacts_wo_creds = URL_ARTIFACTS_WO_CREDS
 
             log.info("Artifacts: %s", artifacts)
 
@@ -1027,7 +1081,9 @@ def main():
 
                 # Get all reports from related artifacts
                 out, reports_related, dur_g = get_reports(
-                    related_artifacts, distribs, url_artifacts=URL_ARTIFACTS
+                    related_artifacts,
+                    distribs=["robot_framework", "unit", "ucheck"],
+                    url_artifacts=URL_ARTIFACTS
                 )  # /!\ Warning old artifacts url used here
 
             # Get all reports from artifacts
