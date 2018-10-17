@@ -31,9 +31,9 @@ log = logging.getLogger(__name__)
 log.addHandler(file_h)
 
 URL_ARTIFACTS_PUBLIC = (
-    'https://eve.devsca.com/bitbucket/scality/ring/artifacts/builds/'
+    'https://eve.devsca.com/bitbucket//ring/artifacts/builds/'
 )
-URL_BASE = 'https://scality.testrail.net/'
+URL_BASE = 'https://.testrail.net/'
 
 
 try:
@@ -52,11 +52,11 @@ if ARTIFACTS_CRED:
     URL_ARTIFACTS_OLD_WO_CREDS = "https://artifacts.devsca.com/builds/"
 
     URL_ARTIFACTS = (
-        "https://{0}@eve.devsca.com/bitbucket/scality/ring/artifacts/builds/".format(
+        "https://{0}@eve.devsca.com/bitbucket//ring/artifacts/builds/".format(
             ARTIFACTS_CRED)
     )
     URL_ARTIFACTS_WO_CREDS = (
-        "https://eve.devsca.com/bitbucket/scality/ring/artifacts/builds/"
+        "https://eve.devsca.com/bitbucket//ring/artifacts/builds/"
     )
 
 #TODO Use only one ARTIFACT_URL*, the one provided by artifacts_private_url

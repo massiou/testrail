@@ -2,7 +2,7 @@
 # coding: utf-8
 
 """
-Testrail for scality
+Testrail for 
 """
 
 from argparse import ArgumentParser, ArgumentError, RawDescriptionHelpFormatter
@@ -633,18 +633,18 @@ def arg_parse():
 
     1. Add results
        a. directly from an artifact url
-       [scality@8b31e ~]$ python {0} -u  -c 7.2 -v {3} -a {2}
+       [@8b31e ~]$ python {0} -u  -c 7.2 -v {3} -a {2}
 
        b. from local junit report(s)
        /!\ section and distribution MUST be in the report path
-       [scality@8b31e ~]$ python {0} -u -c 7.1 -v {4} -r {1}
+       [@8b31e ~]$ python {0} -u -c 7.1 -v {4} -r {1}
 
     2. Close plans according to a pattern
         (Close all 7.4.0.0 test plans)
-        [scality@8b31e ~]$ python {0} -k 7.4.0.0-
+        [@8b31e ~]$ python {0} -k 7.4.0.0-
     """.format(sys.argv[0],
                'reports/report_zimbra_centos7_710_rc5.xml',
-               'bitbucket:scality:ring:promoted-7.2.0.0_rc2',
+               'bitbucket::ring:promoted-7.2.0.0_rc2',
                'promoted-7.2.0.0_rc2',
                '7.1.0_rc5')
 
@@ -693,7 +693,7 @@ def arg_parse():
         '-l', '--artifacts_location',
         help="""
         artifacts url,
-        Example: https://artifacts.devsca.com/builds/bitbucket:scality:ring:promoted-5.1.9/""",
+        Example: https://artifacts.devsca.com/builds/bitbucket::ring:promoted-5.1.9/""",
         nargs='*',
         default='',
         required=False)
@@ -1170,7 +1170,7 @@ def main():
 
             # Display test plan url
             url_plan = (
-                "https://scality.testrail.net/index.php?/plans/view/{0}".format(
+                "https://.testrail.net/index.php?/plans/view/{0}".format(
                     plan)
             )
             log.info("Testrail plan: %s", url_plan)
