@@ -45,7 +45,7 @@ autoclass_content = 'both'
 source_suffix = '.rst'
 
 # The master toctree document.
-master_doc = 'tests'
+master_doc = 'testrail'
 
 # General information about the project.
 project = u'testrail'
