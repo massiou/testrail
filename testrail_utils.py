@@ -13,8 +13,8 @@ import time
 
 import requests
 
-LOG_FILE = '{0}.log'.format(tempfile.NamedTemporaryFile().name)
-FORMAT = '[%(asctime)s] %(message)s'
+LOG_FILE = "{0}.log".format(tempfile.NamedTemporaryFile().name)
+FORMAT = "[%(asctime)s] %(message)s"
 
 MAX_RETRY = 5
 
@@ -23,64 +23,56 @@ logging.basicConfig(level=logging.INFO, format=FORMAT)
 
 # Add FileHandler and only log WARNING and higher
 file_h = logging.FileHandler(LOG_FILE)
-file_h.name = 'File Logger'
+file_h.name = "File Logger"
 file_h.level = logging.DEBUG
 file_h.formatter = logging.Formatter(FORMAT)
 
 log = logging.getLogger(__name__)
 log.addHandler(file_h)
 
-URL_ARTIFACTS_PUBLIC = (
-    'https://eve.devsca.com/bitbucket//ring/artifacts/builds/'
-)
-URL_BASE = 'https://.testrail.net/'
+URL_ARTIFACTS_PUBLIC = "https://eve.devsca.com/bitbucket/scality/ring/artifacts/builds/"
+URL_BASE = "https://scality.testrail.net/"
 
 
 try:
-    ART_LOGIN = os.environ['ARTIFACTS_LOGIN']
-    ART_PWD = os.environ['ARTIFACTS_PWD']
-    ARTIFACTS_CRED = '{0}:{1}'.format(ART_LOGIN, ART_PWD)
+    ART_LOGIN = os.environ["ARTIFACTS_LOGIN"]
+    ART_PWD = os.environ["ARTIFACTS_PWD"]
+    ARTIFACTS_CRED = "{0}:{1}".format(ART_LOGIN, ART_PWD)
 except KeyError:
-    log.info('ARTIFACTS_LOGIN and/or ARTIFACTS_PWD not found')
-    ARTIFACTS_CRED = None
+    log.info("ARTIFACTS_LOGIN and/or ARTIFACTS_PWD not found")
+    ARTIFACTS_CRED = ""
 
 if ARTIFACTS_CRED:
-    URL_ARTIFACTS_OLD = (
-        "https://{0}@artifacts.devsca.com/builds/".format(
-            ARTIFACTS_CRED)
+    URL_ARTIFACTS_OLD = "https://{0}@artifacts.devsca.com/builds/".format(
+        ARTIFACTS_CRED
     )
     URL_ARTIFACTS_OLD_WO_CREDS = "https://artifacts.devsca.com/builds/"
 
-    URL_ARTIFACTS = (
-        "https://{0}@eve.devsca.com/bitbucket//ring/artifacts/builds/".format(
-            ARTIFACTS_CRED)
+    URL_ARTIFACTS = "https://{0}@eve.devsca.com/bitbucket/scality/ring/artifacts/builds/".format(
+        ARTIFACTS_CRED
     )
     URL_ARTIFACTS_WO_CREDS = (
-        "https://eve.devsca.com/bitbucket//ring/artifacts/builds/"
+        "https://eve.devsca.com/bitbucket/scality/ring/artifacts/builds/"
     )
 
-#TODO Use only one ARTIFACT_URL*, the one provided by artifacts_private_url
-# Following sections to be removed
+# TODO Use only one ARTIFACT_URL*, the one provided by artifacts_private_url
+#  Following sections to be removed
 else:
-    URL_ARTIFACTS_OLD = URL_ARTIFACTS_OLD_WO_CREDS = (
-        "http://artifacts/builds/"
-    )
-    URL_ARTIFACTS = URL_ARTIFACTS_WO_CREDS = (
-        "http://artifacts/builds/"
-    )
+    URL_ARTIFACTS_OLD = URL_ARTIFACTS_OLD_WO_CREDS = "http://artifacts/builds/"
+    URL_ARTIFACTS = URL_ARTIFACTS_WO_CREDS = "http://artifacts/builds/"
 
 HEADER = {"Content-Type": "application/json"}
-RING_ID = 1
+PROJECT_ID = 5
 
 try:
-    LOGIN = os.environ['TESTRAIL_LOGIN']
+    LOGIN = os.environ["TESTRAIL_LOGIN"]
 except KeyError:
-    raise Exception('Please export TESTRAIL_LOGIN environment variable')
+    raise Exception("Please export TESTRAIL_LOGIN environment variable")
 
 try:
-    KEY = os.environ['TESTRAIL_KEY']
+    KEY = os.environ["TESTRAIL_KEY"]
 except KeyError:
-    raise Exception('Please export TESTRAIL_KEY environment variable')
+    raise Exception("Please export TESTRAIL_KEY environment variable")
 
 
 def testrail_get(cmd, t_id, **params):
@@ -98,14 +90,12 @@ def testrail_get(cmd, t_id, **params):
     :return: ret
     :rtype: dict
     """
-    url_params = "&".join([str(t_id)] + ["{0}={1}".format(k, v)
-                                         for k, v in params.items()
-                                         if v is not None])
+    url_params = "&".join(
+        [str(t_id)]
+        + ["{0}={1}".format(k, v) for k, v in params.items() if v is not None]
+    )
 
-    url = os.path.join(URL_BASE, "index.php?/api/v2/{0}/{1}".format(
-        cmd, url_params))
-
-    log.info(url)
+    url = os.path.join(URL_BASE, "index.php?/api/v2/{0}/{1}".format(cmd, url_params))
 
     attempts = 0
     status_code = 429
@@ -113,16 +103,16 @@ def testrail_get(cmd, t_id, **params):
     while status_code == 429 and attempts < MAX_RETRY:
         req = requests.get(url, headers=HEADER, auth=(LOGIN, KEY))
 
-        retry_after = req.headers.get('Retry-After')
+        retry_after = req.headers.get("Retry-After")
         status_code = req.status_code
         attempts += 1
 
         if retry_after:
             time.sleep(int(retry_after) + 1)
-            log.info("Retry after: %s sec...", retry_after)
+            log.info("%s\nRetry after: %s sec...", url, retry_after)
         elif status_code == 429:
             time.sleep(attempts)
-            log.info("Waiting %s sec...", attempts)
+            log.info("%s\nWaiting %s sec...", url, attempts)
 
     ret = req.json()
 
@@ -145,27 +135,24 @@ def testrail_post(url, request, session=None):
 
     while status_code == 429 and attempts < MAX_RETRY:
         if session:
-            req = session.post(url,
-                               headers=HEADER,
-                               data=json.dumps(request),
-                               auth=(LOGIN, KEY))
+            req = session.post(
+                url, headers=HEADER, data=json.dumps(request), auth=(LOGIN, KEY)
+            )
         else:
-            req = requests.post(url,
-                                headers=HEADER,
-                                data=json.dumps(request),
-                                auth=(LOGIN, KEY))
+            req = requests.post(
+                url, headers=HEADER, data=json.dumps(request), auth=(LOGIN, KEY)
+            )
 
-        retry_after = req.headers.get('Retry-After')
+        retry_after = req.headers.get("Retry-After")
         status_code = req.status_code
         attempts += 1
 
         if retry_after:
             time.sleep(int(retry_after) + 1)
-            log.info("Retry after: %s sec...", retry_after)
+            log.info("%s\nRetry after: %s sec...", url, retry_after)
         elif status_code == 429:
             time.sleep(attempts)
-            log.info("Waiting %s sec...", attempts)
-
+            log.info("%s\nWaiting %s sec...", url, attempts)
 
     return req
 
@@ -182,59 +169,26 @@ def add_plan(name, milestone, description):
     :return: None
     """
 
-    url = os.path.join(URL_BASE, 'index.php?/api/v2/add_plan/{0}'.format(
-        RING_ID
-    ))
+    url = os.path.join(URL_BASE, "index.php?/api/v2/add_plan/{0}".format(PROJECT_ID))
     log.info("Add plan %s", name)
     request = {"name": name, "suite_id": 1, "description": description}
     if milestone:
         milestone_id = get_milestone(milestone)
-        request['milestone_id'] = milestone_id
+        request["milestone_id"] = milestone_id
     ret = testrail_post(url, request)
 
     return ret
 
 
-def add_plan_entry(plan_id, suite_id, config_ids, centos_tests):
-    """
-    Add suite and config to an existing testrail plan
-
-    :param plan_id: testrail plan
-    :type plan_id: integer
-    :param suite_id: testrail tests suite
-    :type suite_id: integer
-    :param config_ids: testrail list of configuration (related to tests suite)
-    :type config_ids: list of integers
-    :return: None
-    """
-    url = os.path.join(URL_BASE, 'index.php?/api/v2/add_plan_entry/{0}'.format(
-        plan_id
-    ))
+def add_plan_entry(plan_id, suite_id, config_ids):
+    url = os.path.join(URL_BASE, "index.php?/api/v2/add_plan_entry/{0}".format(plan_id))
 
     runs_list = [
-        {
-            "include_all": False,
-            "case_ids": centos_tests,
-            "config_ids": [1, ]
-        },
-        {
-            "include_all": False,
-            "case_ids": centos_tests,
-            "config_ids": [2, ]
-        },
-        {
-            "include_all": True,
-            "config_ids": [3, ]
-        }
-
+        {"include_all": True, "config_ids": [config_id]} for config_id in config_ids
     ]
 
-    request = {
-        "suite_id": suite_id,
-        "config_ids": config_ids,
-        "runs": runs_list
-    }
-
+    request = {"suite_id": suite_id, "config_ids": config_ids, "runs": runs_list}
+    log.debug("Add plan entries: %s", request)
     ret = testrail_post(url, request)
     return ret
 
@@ -251,18 +205,17 @@ def add_testcase(test_case, section_id, testrail_cases_name):
     :type testrail_cases_name: list of string
     :return:
     """
-    url = os.path.join(URL_BASE, "index.php?/api/v2/add_case/{0}".format(
-        section_id))
-    log.debug('Add case: %s', url)
+    url = os.path.join(URL_BASE, "index.php?/api/v2/add_case/{0}".format(section_id))
+    log.debug("Add case: %s", url)
 
     request = {"title": test_case}
 
-    log.info('test case: %s', test_case)
+    log.info("test case: %s", test_case)
     log.debug(json.dumps(request))
 
     # Avoid doublon
     if test_case in testrail_cases_name:
-        log.warning('test case already exists: %s', test_case)
+        log.warning("test case already exists: %s", test_case)
         return
 
     log.info(url)
@@ -285,15 +238,12 @@ def update_plan_entry(plan_id, entry_id, description):
     :type description: string
     :return: None
     """
-    log.info(description)
+    log.debug(description)
     url = os.path.join(
-        URL_BASE, 'index.php?/api/v2/update_plan_entry/{0}/{1}'.format(
-            plan_id, entry_id
-        ))
-    request = {
-        "include_all": True,
-        "description": description
-    }
+        URL_BASE,
+        "index.php?/api/v2/update_plan_entry/{0}/{1}".format(plan_id, entry_id),
+    )
+    request = {"include_all": True, "description": description}
 
     ret = testrail_post(url, request)
     return ret
@@ -308,7 +258,7 @@ def add_sections(suite, sections):
     """
     suite_id = get_suite(suite)
     for section in sections:
-        url = os.path.join(URL_BASE, 'index.php?/api/v2/add_section/1')
+        url = os.path.join(URL_BASE, "index.php?/api/v2/add_section/1")
         log.info("Add %s section", section)
         request = {"name": section, "suite_id": suite_id}
         ret = testrail_post(url, request)
@@ -322,7 +272,7 @@ def get_open_plans():
     :return: list of testrail plans
     :rtype: list of dict
     """
-    plans = testrail_get("get_plans", RING_ID, is_completed=0)
+    plans = testrail_get("get_plans", PROJECT_ID, is_completed=0)
 
     return plans
 
@@ -335,7 +285,7 @@ def get_open_plan(version):
     """
     plans = get_open_plans()
     for plan in plans:
-        name = plan.get('name')
+        name = plan.get("name")
         if name == version:
             log.info("Plan already exists %s", name)
             return plan.get("id")
@@ -349,7 +299,8 @@ def get_plans_created_before(timestamp, offset=0):
     :rtype: list
     """
     plans = testrail_get(
-        "get_plans", RING_ID, created_before=int(timestamp), offset=offset)
+        "get_plans", PROJECT_ID, created_before=int(timestamp), offset=offset
+    )
     return [plan for plan in plans]
 
 
@@ -361,9 +312,7 @@ def close_plan(plan_id):
     :type plan_id: integer
     :return: None
     """
-    url = os.path.join(
-        URL_BASE, 'index.php?/api/v2/close_plan/{0}'.format(plan_id)
-    )
+    url = os.path.join(URL_BASE, "index.php?/api/v2/close_plan/{0}".format(plan_id))
 
     ret = testrail_post(url, {})
     return ret
@@ -381,14 +330,18 @@ def close_plans(pattern):
     log.info("%s open plans", len(plans))
     count = 0
     for plan in plans:
-        name = plan.get('name')
+        name = plan.get("name")
         if name.startswith(pattern):
             log.info("Closing plan %s", name)
             ret = close_plan(plan.get("id"))
             # Warn current plan has not been closed
             if ret.status_code != 200:
-                log.info('status code: %s, log: %s, reason: %s',
-                         ret.status_code, ret.text, ret.reason)
+                log.info(
+                    "status code: %s, log: %s, reason: %s",
+                    ret.status_code,
+                    ret.text,
+                    ret.reason,
+                )
             else:
                 count += 1
     log.info("%s plan(s) closed with pattern %s", count, pattern)
@@ -402,9 +355,7 @@ def delete_plan(plan_id, session=None):
     :param session: requests Session
     :return:
     """
-    url = os.path.join(
-        URL_BASE, "index.php?/api/v2/delete_plan/{0}".format(plan_id)
-    )
+    url = os.path.join(URL_BASE, "index.php?/api/v2/delete_plan/{0}".format(plan_id))
     ret = testrail_post(url, {}, session)
 
     return ret
@@ -417,8 +368,8 @@ def get_suite(suite):
     :type suite: string
     :rtype: integer
     """
-    suites = testrail_get('get_suites', RING_ID)
-    suite_id = [s["id"] for s in suites if s['name'] == suite]
+    suites = testrail_get("get_suites", PROJECT_ID)
+    suite_id = [s["id"] for s in suites if s["name"] == suite]
 
     return suite_id[0]
 
@@ -433,10 +384,10 @@ def get_section(suite_id, section):
     :return: section_id
     :rtype: integer
     """
-    sections = testrail_get("get_sections", RING_ID, suite_id=suite_id)
+    sections = testrail_get("get_sections", PROJECT_ID, suite_id=suite_id)
     for c_section in sections:
-        if c_section['name'] == section:
-            return c_section['id']
+        if c_section["name"] == section:
+            return c_section["id"]
 
 
 def get_sections(suite_id):
@@ -448,7 +399,7 @@ def get_sections(suite_id):
     :return: sections
     :rtype: list of string
     """
-    sections = testrail_get("get_sections", RING_ID, suite_id=suite_id)
+    sections = testrail_get("get_sections", PROJECT_ID, suite_id=suite_id)
     return sections
 
 
@@ -460,12 +411,12 @@ def get_plan(version):
     :return: plan id
     :rtype: integer
     """
-    plans = testrail_get('get_plans', RING_ID)
+    plans = testrail_get("get_plans", PROJECT_ID)
     log.debug(plans)
     assert plans
     for plan in plans:
-        if plan['name'] == version:
-            return plan['id']
+        if plan["name"] == version:
+            return plan["id"]
 
 
 def get_runs(plan_id):
@@ -476,7 +427,10 @@ def get_runs(plan_id):
     """
 
     runs = testrail_get("get_plan", plan_id)
-    return runs['entries'][0]['runs']
+    if runs.get("entries"):
+        return runs["entries"][0]["runs"]
+    else:
+        return [runs]
 
 
 def get_entries_id(plan_id):
@@ -487,7 +441,8 @@ def get_entries_id(plan_id):
     """
 
     runs = get_runs(plan_id)
-    return [(run['entry_id'], run['config']) for run in runs]
+    log.debug("Runs: %s", runs)
+    return [(run["entry_id"], run["config"]) for run in runs]
 
 
 def get_run(plan_id, distrib):
@@ -499,8 +454,9 @@ def get_run(plan_id, distrib):
     """
     runs = get_runs(plan_id)
     for run in runs:
-        if run['config'].lower() == distrib.lower():
-            return run['id']
+        log.debug("Run: %s", run)
+        if run["config"].lower() == distrib.lower():
+            return run["id"]
 
 
 def get_cases(suite, section=None):
@@ -515,10 +471,15 @@ def get_cases(suite, section=None):
         section_id = get_section(suite_id, section)
     else:
         section_id = None
-    return testrail_get("get_cases",
-                        RING_ID,
-                        suite_id=suite_id,
-                        section_id=section_id)
+    return testrail_get(
+        "get_cases", PROJECT_ID, suite_id=suite_id, section_id=section_id
+    )
+
+
+def get_configs():
+    """
+    """
+    return testrail_get("get_configs", PROJECT_ID)
 
 
 def get_case(name, suite, section=None):
@@ -533,11 +494,11 @@ def get_case(name, suite, section=None):
     cases = get_cases(suite, section)
 
     for case in cases:
-        if case.get('title') == name:
-            return case.get('id')
+        if case.get("title") == name:
+            return case.get("id")
 
 
-def get_milestones(project_id=RING_ID):
+def get_milestones(project_id=PROJECT_ID):
     """
 
     :param project_id:
@@ -554,7 +515,7 @@ def get_submilestones(id):
     :type id: integer
     :return: list of sub-milestones
     """
-    return testrail_get("get_milestone", id)['milestones']
+    return testrail_get("get_milestone", id)["milestones"]
 
 
 def get_milestone(name):
@@ -566,9 +527,7 @@ def get_milestone(name):
     :return: id
     :rtype: integer
     """
-    parent_milestones = [
-        (mil.get('name'), mil.get('id')) for mil in get_milestones()
-    ]
+    parent_milestones = [(mil.get("name"), mil.get("id")) for mil in get_milestones()]
 
     # Loop on milestones then sub-milestones if need be
     for pname, pid in parent_milestones:
@@ -576,8 +535,8 @@ def get_milestone(name):
             return pid  # parent milestone found
         sub_mil = get_submilestones(pid)
         for sub in sub_mil:
-            if sub.get('name') == name:
-                return sub.get('id')  # sub-milestone found
+            if sub.get("name") == name:
+                return sub.get("id")  # sub-milestone found
 
 
 def get_tests(run_id):
@@ -600,8 +559,8 @@ def get_test(name, run_id):
     tests = get_tests(run_id)
 
     for test in tests:
-        if test.get('title') == name:
-            return test.get('id')
+        if test.get("title") == name:
+            return test.get("id")
 
 
 def put_results(run, results, tests_db):
@@ -615,17 +574,17 @@ def put_results(run, results, tests_db):
 
     log.debug(tests_db)
 
-    results_d = {'results': results}
+    results_d = {"results": results}
 
     number_of_res = len(results)
 
     # POST results dictionary
     url = URL_BASE + "index.php?/api/v2/add_results/{0}".format(run)
-    log.info('Posting results...')
+    log.info("Posting results...")
 
     ret = testrail_post(url, results_d)
 
-    log.info('Nb results: %s', number_of_res)
+    log.info("Nb results: %s", number_of_res)
 
     if ret.status_code != 200:
         log.info("Put failed: %s", ret)

@@ -2,7 +2,7 @@
 # coding: utf-8
 
 """
-Testrail for 
+Testrail for scality
 """
 
 from argparse import ArgumentParser, ArgumentError, RawDescriptionHelpFormatter
@@ -32,6 +32,7 @@ from testrail_utils import (
     close_plans,
     log,
     get_cases,
+    get_configs,
     get_entries_id,
     get_suite,
     get_section,
@@ -44,52 +45,7 @@ from testrail_utils import (
     update_plan_entry,
 )
 
-
-OS = ('Centos6', 'Centos7', 'Trusty')
-
-# Handle test cases generated with random names
-# In testrail, one test case ID == one test case name
-RANDOM_TEST_NAMES = {
-    'rs2':
-        [
-            'test.test_simpleflow.test_simpleflow[make bucket',
-            'test.test_simpleflow.test_simpleflow[list bucket',
-            'test.test_simpleflow.test_simpleflow[put file',
-            'test.test_simpleflow.test_simpleflow[get file',
-            'test.test_simpleflow.test_simpleflow[del file',
-            'test.test_simpleflow.test_simpleflow[delete bucket',
-        ],
-    'bizstorenode':
-        [
-            'test.test_bizstorenode.Test_NODE.test_NODE_PUT[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_READ[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_INFO[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_INFO_REPLICAS[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_READ_REPLICAS[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_DELETE[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_REWRITE[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_FUZZ[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_RESYNC[nodes-n1(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_PUT[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_INFO[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_INFO_REPLICAS[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_READ[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_READ_REPLICAS[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_DELETE[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_REWRITE[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_FUZZ[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_RESYNC[nodes-n2(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_PUT[nodes-n3(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_READ[nodes-n3(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_INFO[nodes-n3(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_INFO_REPLICAS[nodes-n3(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_READ_REPLICAS[nodes-n3(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_DELETE[nodes-n3(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_REWRITE[nodes-n3(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_FUZZ[nodes-n3(',
-            'test.test_bizstorenode.Test_NODE.test_NODE_RESYNC[nodes-n3(',
-        ],
-}
+OS = ("xenial", "centos7")
 
 STATUS_ID = {
     "passed": 1,
@@ -98,10 +54,10 @@ STATUS_ID = {
     "known_failed_ok": 7,
     "known_failed": 10,
     "flaky_passed": 11,
-    "flaky_failed": 12
+    "flaky_failed": 12,
 }
 
-report_obj = namedtuple('report', ['path', 'section', 'distrib'])
+report_obj = namedtuple("report", ["path", "section", "distrib"])
 
 
 def parse_report(report_path):
@@ -112,56 +68,14 @@ def parse_report(report_path):
     """
     report = parse(report_path)
 
-    testcases = ['.'.join([tcase.get('classname', ''),
-                           tcase.get('name', '')])
-                 for tcase in report.findall('.//testcase')]
+    testcases = [
+        ".".join([tcase.get("classname", ""), tcase.get("name", "")])
+        for tcase in report.findall(".//testcase")
+    ]
 
-    testcases = [t for t in testcases if t != '.']
+    testcases = [t for t in testcases if t != "."]
 
     return testcases
-
-
-def modify_testname(test_name, section):
-    """
-    Handle specific test names
-
-    :param test_name: string
-    :param section: test suite section
-    :type section: string
-    :return: string
-    """
-
-    # remove random RING key
-    test_name = re.sub('[0-F]{40}', 'KEY', test_name)
-
-    # remove too long ring name (sprov)
-    test_name = re.sub('[A]{32}', 'A*32', test_name)
-
-    # remove IP address (bizstorenode
-    test_name = re.sub(
-        r'\([0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.*\)', '', test_name
-    )
-
-    # remove IP address (geos)
-    test_name = re.sub(
-        r'[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.*\]', '', test_name
-    )
-
-    # remove date (supervisor)
-    test_name = re.sub('20[0-9]{2}.[0-9]{1,2}.[0-9]{1,2}', '', test_name)
-
-    # Remove distrib in test name (supervisor hack)
-    for distrib in OS:
-        if distrib.lower() in test_name.lower():
-            test_name = test_name.lower()
-            test_name = re.sub(r'{0}'.format(distrib.lower()), '', test_name)
-
-    # Handle random test names if possible
-    for rand_tests in RANDOM_TEST_NAMES.get(section, []):
-        if test_name.startswith(rand_tests):
-            return rand_tests
-
-    return test_name
 
 
 def add_testcases(suite, tests, testrail_cases_name):
@@ -181,22 +95,21 @@ def add_testcases(suite, tests, testrail_cases_name):
     nb_new_tests = 0
 
     for section in tests:
-        log.info('Section: %s', section)
-        log.info('Suite: %s', suite)
+        log.info("Section: %s", section)
+        log.info("Suite: %s", suite)
         suite_id = get_suite(suite)
-        log.info('Suite id: %s', suite_id)
+        log.info("Suite id: %s", suite_id)
         section_id = get_section(suite_id, section)
-        log.info('Tests to be added: %s', tests)
+        log.info("Tests to be added: %s", tests)
 
         for test in tests[section]:
-            test = modify_testname(test, section)
-            log.info('Adding %s in section %s', test, section)
+            log.info("Adding %s in section %s", test, section)
             ret = add_testcase(test, section_id, testrail_cases_name)
             if ret == 200:
                 nb_new_tests += 1
                 testrail_cases_name.append(test)
             else:
-                log.info('%s test not added', test)
+                log.info("%s test not added", test)
 
     duration = time.time() - start
 
@@ -204,7 +117,7 @@ def add_testcases(suite, tests, testrail_cases_name):
 
 
 def add_result(
-        test_case, tests_db, run, section, version, description, flaky, known_failed
+    test_case, tests_db, run, section, version, description, flaky, known_failed
 ):
     """
 
@@ -223,20 +136,18 @@ def add_result(
     """
 
     # Building test name
-    name = test_case.get('name', '')
-    classname = test_case.get('classname', '')
+    name = test_case.get("name", "")
+    classname = test_case.get("classname", "")
 
-    name = '.'.join([classname, name])
-
-    name = modify_testname(name, section)
+    name = ".".join([classname, name])
 
     # Get elapsed time if set
-    elapsed = test_case.get('time')
+    elapsed = test_case.get("time")
 
     # Get test case id
     for test in tests_db:
-        if name == test['title']:
-            test_id = test['id']
+        if name == test["title"]:
+            test_id = test["id"]
             break
     else:
         log.debug("%s: No test found", name)
@@ -250,31 +161,29 @@ def add_result(
     if child:
         child = child[0]
         status = child.tag
-        if status == 'failure' or status == 'error':
+        if status == "failure" or status == "error":
             status_id = STATUS_ID["failed"]
-        elif status == 'skipped':
+        elif status == "skipped":
             status_id = STATUS_ID["skipped"]
         else:
             status_id = STATUS_ID["passed"]
 
         # Get message if exists
-        attrib = child.attrib.get('message', '').encode('utf-8')
+        attrib = child.attrib.get("message", "").encode("utf-8")
         attrib = textwrap.dedent(attrib)
         if child.text:
-            text = child.text.encode('utf-8')
+            text = child.text.encode("utf-8")
         else:
             text = "No trace"
 
-        message += (
-            "***\n# Error message\n{0}\n***\n# Traceback\n{1}\n***\n".format(
-                attrib, text
-            )
+        message += "***\n# Error message\n{0}\n***\n# Traceback\n{1}\n***\n".format(
+            attrib, text
         )
         message = textwrap.dedent(message)
 
     else:
         status_id = STATUS_ID["passed"]
-        message += 'OK'
+        message += "OK"
 
     # Handle known failed tests
     if name in known_failed:
@@ -297,24 +206,30 @@ def add_result(
     elapsed = int(float(elapsed))
 
     log.debug(message)
-    log.debug('name: %s test_id: %s status_id:%s message:%s',
-              name, test_id, status_id, message)
+    log.debug(
+        "name: %s test_id: %s status_id:%s message:%s",
+        name,
+        test_id,
+        status_id,
+        message,
+    )
 
-    result = {'test_id': test_id,
-              'status_id': status_id,
-              'comment': message,
-              'version': version
-              }
+    result = {
+        "test_id": test_id,
+        "status_id": status_id,
+        "comment": message,
+        "version": version,
+    }
 
     if elapsed:
-        result['elapsed'] = str(elapsed) + 's'
+        result["elapsed"] = str(elapsed) + "s"
 
     log.debug(result)
     return result
 
 
 def build_results(
-        report, version, run, section, tests_db, description, flaky, known_failed
+    report, version, run, section, tests_db, description, flaky, known_failed
 ):
     """
     Given a report get a results dict
@@ -336,7 +251,7 @@ def build_results(
 
     results_l = []
 
-    for tcase in report.findall('.//testcase'):
+    for tcase in report.findall(".//testcase"):
         result = add_result(
             tcase, tests_db, run, section, version, description, flaky, known_failed
         )
@@ -360,16 +275,18 @@ def get_reports(version, distribs, url_artifacts=URL_ARTIFACTS):
     """
     start = time.time()
 
-    version = ''.join([url_artifacts, version])
+    version = "".join([url_artifacts, version])
 
-    url = os.path.join(version) + '/'
+    url = os.path.join(version) + "/"
     tmp_dir = tempfile.mkdtemp()
     log.info(url)
 
     # Download all junit/report.xml in odr artifacts repo
-    cmd = ('wget --tries=50 -l 10 -q -r -P {0} '
-           '--progress=dot:mega '
-           '--accept=*.xml,report.json {1}').format(tmp_dir, url)
+    cmd = (
+        "wget --tries=50 -l 10 -r -P {0} "
+        "--progress=dot:mega "
+        "--accept=*.xml,report.json {1}"
+    ).format(tmp_dir, url)
 
     log.info(cmd)
 
@@ -385,8 +302,7 @@ def get_reports(version, distribs, url_artifacts=URL_ARTIFACTS):
     if tmp_dir not in paths:
         paths.append(tmp_dir)
 
-    log.info("Reports downloaded from %s:\n%s",
-             url, '\n'.join(paths))
+    log.info("Reports downloaded from %s:\n%s", url, "\n".join(paths))
 
     duration = time.time() - start
 
@@ -403,16 +319,16 @@ def get_related_artifacts(version, url_artifacts=URL_ARTIFACTS):
     :type distribs: list of strings
     :return:
     """
-    version = ''.join([url_artifacts, version])
+    version = "".join([url_artifacts, version])
 
-    url = os.path.join(version) + '/.related_artifacts/'
+    url = os.path.join(version) + "/.related_artifacts/"
     tmp_dir = tempfile.mkdtemp()
     log.info(url)
 
     # Download the related artifacts url
-    cmd = ('wget --tries=50 -l 3 -q -r -P {0} '
-           '--progress=dot:mega '
-           '{1}').format(tmp_dir, url)
+    cmd = ("wget --tries=50 -l 3 -r -P {0} " "--progress=dot:mega " "{1}").format(
+        tmp_dir, url
+    )
 
     log.info(cmd)
 
@@ -441,7 +357,7 @@ def parse_index_file(path):
     :return premerge_name: premerge artifacts name
     :rtype: string
     """
-    with open(path, 'r') as content:
+    with open(path, "r") as content:
         try:
             premerge_name = re.search('href="./(.*)">', content.read()).group(1)
         except Exception as exc:
@@ -467,8 +383,36 @@ def find(pattern, path):
     return result
 
 
-def put_results_from_reports(
-        version, suite, milestone, reports, distribs, description):
+def get_flagged_tests(suite, flag):
+    """
+    Return flagged tests in testrail
+    We are looking for `References` field value in testcases
+
+    :param suite: 
+    :type suite: string
+    :param flag: manually set in testrail 
+    :type flag: string, such as "flaky", "known_failed", etc
+    :rtype: list 
+    """
+    flagged = []
+    
+    suite_id = get_suite(suite)
+
+    for section in get_sections(suite_id):
+        cases_suite = get_cases(suite, section.get("name"))
+        cases = [case.get("id") for case in cases_suite]
+        
+        # Retrieve flagged tests from DB
+        flag_cases = [
+            case.get("title")
+            for case in cases_suite
+            if case.get("refs", "") is not None and flag in case.get("refs")
+        ]
+        flagged.extend(flag_cases)
+        
+    return flagged
+
+def put_results_from_reports(version, suite, milestone, reports, distribs, description):
     """
 
     :param version:
@@ -479,83 +423,64 @@ def put_results_from_reports(
     :param description:
     :return:
     """
+    start = time.time()
     nb_res = 0
 
-    start = time.time()
+    suite_id = get_suite(suite)
+    sections = get_sections(suite_id)
+    log.info("sections: %s ", sections)
+
+    flaky = get_flagged_tests(suite, "flaky")
+    known_failed = get_flagged_tests(suite, "known_failed")
 
     plan = get_open_plan(version)
-    suite_id = get_suite(suite)
-
-    exclude_section = ['unit', 'robot_framework']
-    sections = get_sections(suite_id)
-    log.info(sections)
-
-    centos_tests = []
-    flaky = []
-    known_failed = []
-    for section in get_sections(suite_id):
-        if section.get('name') not in exclude_section:
-            cases_suite = get_cases(suite, section.get('name'))
-
-            cases = [case.get('id') for case in cases_suite]
-            centos_tests.extend(cases)
-
-            # Retrieve flaky tests from DB
-            flaky_cases = [
-                case.get('title') for case in cases_suite
-                if case.get('refs', '') is not None
-                and "flaky" in case.get('refs')
-                ]
-            flaky.extend(flaky_cases)
-
-            # Retrieve known failed tests from DB
-            failed_cases = [
-                case.get('title') for case in cases_suite
-                if case.get('refs', '') is not None
-                and "known_failed" in case.get('refs')
-                ]
-            known_failed.extend(failed_cases)
 
     if not plan:
         add_plan(version, milestone, description)
         plan = get_plan(version)
-        add_plan_entry(plan, suite_id, [1, 2, 3], centos_tests)
-
-    assert plan, "No plan found linked to test suite {0}".format(
-        version)
+        configs = get_configs()[0]["configs"]
+        config_ids = [g["id"] for g in configs]
+        add_plan_entry(plan, suite_id, config_ids)
+    assert plan, "No plan found linked to test suite {0}".format(version)
 
     entries_id = get_entries_id(plan)
+    log.info("entries id: %s", entries_id)
     for entry_id, config in entries_id:
-        log.info('Update config: %s run (entry_id): %s', config, entry_id)
+        log.info("Update config: %s run (entry_id): %s", config, entry_id)
         update_plan_entry(plan, entry_id, description)
 
     # Loop on distribution (one distrib per run)
     for distrib in distribs:
         log.info(distrib)
-
         run = get_run(plan, distrib)
         assert run, "No run found linked to plan {0}".format(plan)
 
         tests_db = get_tests(run)
-        results = []
-
         # Loop on report related to distrib
         for report in reports:
             if report.distrib == distrib.lower() and report.section:
-
                 results_c = build_results(
-                    report, version, run, report.section, tests_db, description, flaky, known_failed
+                    report,
+                    version,
+                    run,
+                    report.section,
+                    tests_db,
+                    description,
+                    flaky,
+                    known_failed,
                 )
-                #results.extend(results_c)
+                log.info("%s: %s results", report, len(results_c))
 
-                log.info('%s: %s results', report, len(results_c))
-                nb_per_slice = 1000
-                nb_slices = len(results_c) / nb_per_slice + 1
-                for idx in range(nb_slices):
-                    nb_res_distrib = put_results(
-                        run, results_c[nb_per_slice * idx: nb_per_slice * (idx + 1)], tests_db
-                    )
-                    nb_res += nb_res_distrib
+                if results_c:
+                    nb_per_slice = 1000
+                    nb_slices = len(results_c) / nb_per_slice + 1
+                    # Put results by batch
+                    for idx in range(nb_slices):
+                        c_results = results_c[
+                            nb_per_slice * idx : nb_per_slice * (idx + 1)
+                        ]
+                        nb_res_distrib = put_results(run, c_results, tests_db)
+                        nb_res += nb_res_distrib
     duration = time.time() - start
 
     return nb_res, duration, plan
@@ -573,12 +498,10 @@ def check_test_case(report, testrail_names):
     :rtype: list of string
     """
 
-    log.info('check test cases in %s', report.path)
+    log.info("check test cases in %s", report.path)
     test_cases = parse_report(report.path)
 
-    missing_tests = [modify_testname(test, None)
-                     for test in test_cases
-                     if modify_testname(test, None) not in testrail_names]
+    missing_tests = [test for test in test_cases if test not in testrail_names]
 
     return missing_tests
 
@@ -599,10 +522,13 @@ def check_test_cases(reports, suite):
 
     missing_tests = defaultdict(list)
 
-    log.info('Get cases from suite: %s', suite)
+    log.info("Get cases from suite: %s", suite)
+
+    suite_id = get_suite(suite)
+    sections = get_sections(suite_id)
+
     testrail_cases = get_cases(suite)
-    testrail_names = [modify_testname(test['title'], None)
-                      for test in testrail_cases]
+    testrail_names = [test.get("title") for test in testrail_cases]
 
     for report in reports:
         section = report.section
@@ -610,13 +536,19 @@ def check_test_cases(reports, suite):
         log.info("section: %s", section)
 
         if section:
-            log.debug('check cases in %s', report)
+            log.debug("check cases in %s", report)
             missing = check_test_case(report, testrail_names)
 
             if missing:
                 missing_tests[section].extend(missing)
                 # Avoid doublon
                 missing_tests[section] = list(set(missing_tests[section]))
+        else:
+            log.warning("""
+            No section found for %s
+            Section MUST be in the report name
+            Available sections are: %s""", report.path, [section.get('name') for section in sections])
+
 
     duration = time.time() - start
 
@@ -633,125 +565,154 @@ def arg_parse():
 
     1. Add results
        a. directly from an artifact url
-       [@8b31e ~]$ python {0} -u  -c 7.2 -v {3} -a {2}
+       [scality@8b31e ~]$ python {0} -u  -c 7.2 -v {3} -a {2}
 
        b. from local junit report(s)
        /!\ section and distribution MUST be in the report path
-       [@8b31e ~]$ python {0} -u -c 7.1 -v {4} -r {1}
+       [scality@8b31e ~]$ python {0} -u -c 7.1 -v {4} -r {1}
 
     2. Close plans according to a pattern
         (Close all 7.4.0.0 test plans)
-        [@8b31e ~]$ python {0} -k 7.4.0.0-
-    """.format(sys.argv[0],
-               'reports/report_zimbra_centos7_710_rc5.xml',
-               'bitbucket::ring:promoted-7.2.0.0_rc2',
-               'promoted-7.2.0.0_rc2',
-               '7.1.0_rc5')
+        [scality@8b31e ~]$ python {0} -k 7.4.0.0-
+    """.format(
+        sys.argv[0],
+        "reports/report_zimbra_centos7_710_rc5.xml",
+        "bitbucket:scality:ring:promoted-7.2.0.0_rc2",
+        "promoted-7.2.0.0_rc2",
+        "7.1.0_rc5",
+    )
 
-    parser = ArgumentParser(epilog=epilog,
-                            formatter_class=RawDescriptionHelpFormatter)
-
-    parser.add_argument(
-        '-u', '--add_results',
-        help='Add results to a testrail test run',
-        action='store_true',
-        required=False)
+    parser = ArgumentParser(epilog=epilog, formatter_class=RawDescriptionHelpFormatter)
 
     parser.add_argument(
-        '-c', '--cases',
-        help='testrail testsuite, ex: "7.1"',
-        required=False)
+        "-u",
+        "--add_results",
+        help="Add results to a testrail test run",
+        action="store_true",
+        required=False,
+    )
 
     parser.add_argument(
-        '-v', '--version',
+        "-c", "--cases", help='testrail testsuite, ex: "7.1"', required=False
+    )
+
+    parser.add_argument(
+        "-v",
+        "--version",
         help='RING version, linked to a testrail run, ex:"7.1.0_rc5"',
-        required=False)
+        required=False,
+    )
 
     parser.add_argument(
-        '-a', '--artifacts',
+        "-a",
+        "--artifacts",
         help="""
         Url artifacts
         Example: staging-7.1.0.r170626213221.69c5697.post-merge.00034526""",
-        required=False)
+        required=False,
+    )
 
     parser.add_argument(
-        '-r', '--reports',
-        help="Path to junit report",
-        nargs='*',
-        required=False)
+        "-r", "--reports", help="Path to junit report", nargs="*", required=False
+    )
 
     parser.add_argument(
-        '-d', '--distrib',
+        "-d",
+        "--distrib",
         help="""
         distribution(s),
         Example: centos7 centos6""",
-        nargs='*',
+        nargs="*",
         default=OS,
-        required=False)
+        required=False,
+    )
 
     parser.add_argument(
-        '-l', '--artifacts_location',
+        "-l",
+        "--artifacts_location",
         help="""
         artifacts url,
-        Example: https://artifacts.devsca.com/builds/bitbucket::ring:promoted-5.1.9/""",
-        nargs='*',
-        default='',
-        required=False)
+        Example: https://artifacts.devsca.com/builds/bitbucket:scality:ring:promoted-5.1.9/""",
+        nargs="*",
+        default="",
+        required=False,
+    )
 
     parser.add_argument(
-        '-k', '--close_plan',
+        "-k",
+        "--close_plan",
         help="""
         close the current plan after upload
         """,
-        action='store_true',
-        required=False
-        )
+        action="store_true",
+        required=False,
+    )
 
     parser.add_argument(
-        '-p', '--close_pattern_plans',
+        "-p",
+        "--close_pattern_plans",
         help="""
         close plans with the given pattern,
         Example: 7.2.0.0-""",
-        required=False)
+        required=False,
+    )
 
     parser.add_argument(
-        '-m', '--milestone',
+        "-m",
+        "--milestone",
         help="""
         Specify testrail milestone
         Example: 7.4""",
-        required=False)
+        required=False,
+    )
 
     parser.add_argument(
-        '-o', '--old_artifacts',
+        "-o",
+        "--old_artifacts",
         help="""
         Use the old artifacts url i.e https://artifacts.devsca.com/builds/
         """,
-        action='store_true',
-        required=False)
+        action="store_true",
+        required=False,
+    )
 
     parser.add_argument(
-        '-f', '--linkfile',
+        "-f",
+        "--linkfile",
         help="""
         print resulting plan url to filename
         """,
         default="",
-        required=False)
+        required=False,
+    )
 
     parser.add_argument(
-        '-e', '--exclude_sections',
+        "-e",
+        "--exclude_sections",
         help="""
         exclude testrail sections,
         Example: sprov bizstorenode""",
-        nargs='*',
+        nargs="*",
         default="",
-        required=False)
+        required=False,
+    )
 
     parser.add_argument(
-        '-b', '--base_url',
+        "-b",
+        "--base_url",
         help="""
         Artifacts private url""",
-        required=False)
+        required=False,
+    )
 
+    parser.add_argument(
+        "-R",
+        "--reason",
+        default="",
+        help="""
+        Label for current run""",
+        required=False,
+    )
 
     args = parser.parse_args()
 
@@ -768,18 +729,18 @@ def found_global_report(g_reports_l):
     :rtype: string
     """
     reports = []
-    log.debug('found_global_report')
+    log.debug("found_global_report")
     log.debug(g_reports_l)
     for report in g_reports_l:
         valid = True
-        report_json = json.load(open(report, 'r'))
+        report_json = json.load(open(report, "r"))
         for task in report_json:
             # Check if 'steps' key is there
             try:
-                steps = task['steps']
+                steps = task["steps"]
                 log.debug(steps)
             except (KeyError, TypeError):
-                log.info('%s not a valid format for global report', report)
+                log.info("%s not a valid format for global report", report)
                 valid = False
                 break
         if valid:
@@ -814,14 +775,11 @@ def struc_reports(reports, suite, distribs, exclude_sections):
 
     dirs = [r for r in reports if os.path.isdir(r)]
 
-    log.info(dirs)
-
     # Convert each directory to a list of xml report
     global_reports = []
     for c_dir in dirs:
         reports_xml = find("*.xml", c_dir)
         global_reports = find("report.json", c_dir)
-        log.info(reports_xml)
         reports.remove(c_dir)
         reports.extend(reports_xml)
 
@@ -832,40 +790,23 @@ def struc_reports(reports, suite, distribs, exclude_sections):
     # Retrieve section names from testrail test suite
     suite_id = get_suite(suite)
     sections = get_sections(suite_id)
-    sections_name = [s.get('name') for s in sections
-                     if s.get('name') not in exclude_sections]
+    sections_name = [
+        s.get("name") for s in sections if s.get("name") not in exclude_sections
+    ]
 
-    log.info('Sections: %s', sections_name)
+    log.info("Sections: %s", sections_name)
 
     for report in reports:
         c_section = None
         c_distrib = None
         for section in sections_name:
-            if 'undelete' in report:
-                # fuse or cifs could be in the path
-                c_section = 'undelete'
-            elif 'versioning' in report:
-                # fuse or cifs could be in the path
-                c_section = 'versioning'
-            elif 'volprot' in report:
-                # fuse or cifs could be in the path
-                c_section = 'volprot'
-            elif 'robot_framework' in report:
-                # sfused could be in the path
-                c_section = 'robot_framework'
-            elif section in report:
+            if section in report:
                 c_section = section
 
         for distrib in distribs:
             if distrib.lower() in report:
                 c_distrib = distrib.lower()
                 break
-        else:
-            # Handle particular cases here
-            if (c_section == 'robot_framework' or
-                    c_section == 'unit' or c_section == 'ucheck'):
-                # Distrib is not in the path
-                c_distrib = 'trusty'
 
         reports_l.append(report_obj(report, c_section, c_distrib))
 
@@ -883,22 +824,19 @@ def parse_global_report(global_report):
     """
     failed_steps = {}
 
-    report_json = json.load(open(global_report, 'r'))
+    report_json = json.load(open(global_report, "r"))
     log.info(report_json)
     for task in report_json:
-        steps = task.get('steps')
+        steps = task.get("steps")
         for step in steps:
-            if step.get('failed'):
-                step = step['step_name']
-                infos = task.get('task_infos')
-                task = infos['task_name']
-                distrib = infos['permutation']
-                if step in ('setup', 'requirements'):
-                    key = '%s_%s_%s' % (task, distrib, step)
-                    failed_steps[key] = {
-                        'os': distrib,
-                        'step': step
-                    }
+            if step.get("failed"):
+                step = step["step_name"]
+                infos = task.get("task_infos")
+                task = infos["task_name"]
+                distrib = infos["permutation"]
+                if step in ("setup", "requirements"):
+                    key = "%s_%s_%s" % (task, distrib, step)
+                    failed_steps[key] = {"os": distrib, "step": step}
     return failed_steps
 
 
@@ -919,44 +857,37 @@ def mass_tag_failed(failed_steps, version, suite, exclude_sections, desc):
     # Retrieve section names from testrail test suite
     suite_id = get_suite(suite)
     sections = get_sections(suite_id)
-    sections_name = [s.get('name') for s in sections
-                     if s.get('name') not in exclude_sections]
+    sections_name = [
+        s.get("name") for s in sections if s.get("name") not in exclude_sections
+    ]
 
-    log.info('Check environment issues')
-
-    # Hack for suite like undelete.cifs or undelete.fuse
-    tricky_sections = ['undelete', 'volprot', 'versioning']
+    log.info("Check environment issues")
 
     for task, infos in failed_steps.items():
         # Initialize results list for this task
         results_l = []
         for section in sections_name:
             if section in task:
-                for t_section in tricky_sections:
-                    if t_section in task:
-                        s_task = t_section
-                        break
-                else:
-                    s_task = section
-                break
+                s_task = section
+            break
         else:
-            log.info('No valid section found in testrail: %s', task)
+            log.info("No valid section found in testrail: %s", task)
             continue
 
-        log.info('task: %s -> section found: %s', task, s_task)
-        log.info('suite: %s', suite)
+        log.info("task: %s -> section found: %s", task, s_task)
+        log.info("suite: %s", suite)
 
         # Get testrail section id
         cases = get_cases(suite, s_task)
         section_id = get_section(suite_id, s_task)
 
-        distrib = infos['os']
-        step = infos['step']
+        distrib = infos["os"]
+        step = infos["step"]
 
         # Handle setup and requirements failures
-        if step == 'setup':
+        if step == "setup":
             status_id = 8
-        elif step == 'requirements':
+        elif step == "requirements":
             status_id = 9
         else:
             raise Exception(
@@ -966,33 +897,33 @@ def mass_tag_failed(failed_steps, version, suite, exclude_sections, desc):
         log.info(step)
         log.info(distrib)
 
-        # Get all tests related to the current test run
+        #  Get all tests related to the current test run
         run_id = get_run(plan, distrib)
         tests = get_tests(run_id)
 
         # List all test cases related to current section
-        cases_name = [
-            case['id'] for case in cases if case['section_id'] == section_id
-            ]
+        cases_name = [case["id"] for case in cases if case["section_id"] == section_id]
 
         # List all tests related to current section
-        tests = [test for test in tests if test['case_id'] in cases_name]
+        tests = [test for test in tests if test["case_id"] in cases_name]
 
         # Loop on all tests, build dict result and add to results list
         for test in tests:
-            result = {'test_id': test['id'],
-                      'status_id': status_id,
-                      'comment': '{0}\n{1} failed'.format(desc, step),
-                      'version': version}
+            result = {
+                "test_id": test["id"],
+                "status_id": status_id,
+                "comment": "{0}\n{1} failed".format(desc, step),
+                "version": version,
+            }
             results_l.append(result)
 
         # Put all results in one POST for this current task
-        log.info('Put env issues: %s - %s - %s', s_task, distrib, step)
+        log.info("Put env issues: %s - %s - %s", s_task, distrib, step)
         nb_per_slice = 1000
         nb_slices = len(results_l) / nb_per_slice + 1
         for idx in range(nb_slices):
             put_results(
-                run_id, results_l[nb_per_slice * idx: nb_per_slice * (idx + 1)], tests
+                run_id, results_l[nb_per_slice * idx : nb_per_slice * (idx + 1)], tests
             )
 
 
@@ -1005,7 +936,7 @@ def print_log_file(func):
     :param func: function to decorate
     :return wrapper decorated function
     """
-    log.info('Log report available: %s', LOG_FILE)
+    log.info("Log report available: %s", LOG_FILE)
 
     def wrapper(*args, **kwargs):
         """
@@ -1017,7 +948,7 @@ def print_log_file(func):
             log.exception(exc)
             raise Exception(exc)
         finally:
-            log.info('Log report available: %s', LOG_FILE)
+            log.info("Log report available: %s", LOG_FILE)
 
     return wrapper
 
@@ -1042,6 +973,7 @@ def main():
     old_artifacts = args.old_artifacts
     base_url = args.base_url
     linkfile = args.linkfile
+    reason = args.reason
 
     if not milestone:
         milestone = cases
@@ -1050,13 +982,12 @@ def main():
         distribs = OS
 
     if reports:
-        reports = [r.decode('utf-8') for r in reports]
+        reports = [r.decode("utf-8") for r in reports]
 
     # Handle various parameters combinations
     if not add_results and not pattern_plans:
         parser.print_help()
-        raise ArgumentError(
-            None, 'Please add results (-u) or close plans (-k)')
+        raise ArgumentError(None, "Please add results (-u) or close plans (-k)")
 
     elif add_results and version and cases:
         log.info("Version: %s", version)
@@ -1064,7 +995,7 @@ def main():
 
         if artifacts:
             if base_url:
-                url_artifacts = os.path.dirname(base_url) + '/'
+                url_artifacts = os.path.dirname(base_url) + "/"
             elif old_artifacts:
                 url_artifacts = URL_ARTIFACTS_OLD
             else:
@@ -1072,26 +1003,8 @@ def main():
 
             log.info("Artifacts: %s", artifacts)
 
-            # Get related artifacts
-            related_artifacts = get_related_artifacts(artifacts, url_artifacts)
-
-            reports_related = []
-            if related_artifacts:
-                log.info('Found related artifacts: %s', related_artifacts)
-
-                # Get all reports from related artifacts
-                out, reports_related, dur_g = get_reports(
-                    related_artifacts,
-                    distribs=["robot_framework", "unit", "ucheck"],
-                    url_artifacts=URL_ARTIFACTS
-                )  # /!\ Warning old artifacts url used here
-
             # Get all reports from artifacts
-            out, reports, dur_g = get_reports(
-                artifacts, distribs, url_artifacts
-            )
-
-            reports = reports_related + reports
+            out, reports, dur_g = get_reports(artifacts, distribs, url_artifacts)
 
             if not reports:
                 raise Exception("No report found")
@@ -1103,19 +1016,21 @@ def main():
             if not upload_location:
                 upload_location = reports
 
-            description = (
-                """
+            description = """
                 ***\n
                 # Upload infos #\n
                 + Last upload: {0}\n
                 + hostname: {1}\n
                 + user: {2}\n
                 + artifacts: [{3}]({3})\n
+                + reason: {4}\n
                 ***\n
-                """.format(time.asctime(),
-                           socket.gethostname(),
-                           getpass.getuser(),
-                           upload_location)
+                """.format(
+                time.asctime(),
+                socket.gethostname(),
+                getpass.getuser(),
+                upload_location,
+                reason,
             )
             description = textwrap.dedent(description)
 
@@ -1129,10 +1044,8 @@ def main():
 
             # Get missing tests
             missing, present, dur_c = check_test_cases(reports, cases)
-            nb_missing = sum(
-                [len(tests) for _, tests in missing.items()]
-            )
-            log.info('%s Missing tests: %s', nb_missing, missing)
+            nb_missing = sum([len(tests) for _, tests in missing.items()])
+            log.info("%s Missing tests: %s", nb_missing, missing)
 
             # Add missing tests cases in test suite if need be
             nb_new_tests, dur_a = add_testcases(cases, missing, present)
@@ -1147,7 +1060,7 @@ def main():
             log.info("g_reports %s", global_reports)
             for g_report in global_reports:
                 failed_steps = parse_global_report(g_report)
-                log.info('failed steps: %s', failed_steps)
+                log.info("failed steps: %s", failed_steps)
                 mass_tag_failed(
                     failed_steps, version, cases, exclude_sections, description
                 )
@@ -1158,9 +1071,7 @@ def main():
             log.info("* Check existing test cases in %s seconds", dur_c)
 
             if nb_new_tests:
-                log.info(
-                    "* Add %s new tests in %s seconds", nb_new_tests, dur_a
-                )
+                log.info("* Add %s new tests in %s seconds", nb_new_tests, dur_a)
 
             log.info("* Put %s results in %s seconds", nb_res, dur_p)
 
@@ -1168,25 +1079,22 @@ def main():
                 log.info("Closing plan %s", plan)
                 close_plan(plan)
 
-            # Display test plan url
-            url_plan = (
-                "https://.testrail.net/index.php?/plans/view/{0}".format(
-                    plan)
+            #  Display test plan url
+            url_plan = "https://scality.testrail.net/index.php?/plans/view/{0}".format(
+                plan
             )
             log.info("Testrail plan: %s", url_plan)
             if linkfile:
-                with open(linkfile, 'w') as file_:
+                with open(linkfile, "w") as file_:
                     file_.write(url_plan)
 
         else:
-            raise ArgumentError(
-                None,
-                'Need an artifact url OR a list of reports)'
-            )
+            raise ArgumentError(None, "Need an artifact url OR a list of reports)")
     elif pattern_plans:
         close_plans(pattern_plans)
     else:
         parser.print_help()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
